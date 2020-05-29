@@ -165,7 +165,7 @@ WITH RECURSIVE
         UNION ALL
         SELECT
             board.game_name,
-            board.rendered || COALESCE((SELECT rendered FROM rendered_board WHERE rendered_board.row_number = board.row_number + 1), '') || x'0a',
+            board.rendered || COALESCE((SELECT '|' || rendered || '|' FROM rendered_board WHERE rendered_board.row_number = board.row_number + 1), '') || x'0a',
             board.row_number + 1,
             board.num_rows,
             board.row_number + 1 = board.num_rows
@@ -174,6 +174,7 @@ WITH RECURSIVE
     game_status_msg AS (
         SELECT
                name game_name,
+               'Playing "' || name || '" on ' || rows || 'x' || columns || ' board' title,
                CASE
                    WHEN status = 'ACTIVE' THEN 'Game in progress'
                    WHEN status = 'WON' THEN 'Game won'
@@ -187,7 +188,7 @@ WITH RECURSIVE
     )
 SELECT
        board.game_name,
-       game_status_msg.status_message || x'0a' || board.rendered || game_status_msg.prompt
+       game_status_msg.title || x'0a' || game_status_msg.status_message || x'0a' || board.rendered || game_status_msg.prompt || x'0a'
        FROM board
        INNER JOIN game_status_msg ON board.game_name = game_status_msg.game_name
        INNER JOIN games ON board.game_name = games.name
@@ -319,14 +320,3 @@ BEGIN
             NEW."column"
            );
 END;
-
---- Example game:
-INSERT INTO start_game(name, rows, columns, bombs) VALUES ('The Game', 3, 3, 2);
-SELECT * FROM games;
-
-INSERT INTO click_cell(row, "column") VALUES (1, 1);
-
-SELECT * FROM rendered_board WHERE game_name = 'The Game';
-SELECT * FROM cheat_board WHERE game_name = 'The Game';
-SELECT output FROM game_prompt LIMIT 1;
-INSERT INTO click_cell VALUES(3, 1);

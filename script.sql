@@ -1,0 +1,245 @@
+DROP TABLE IF EXISTS games;
+DROP TABLE IF EXISTS bombs;
+DROP TABLE IF EXISTS clicks;
+DROP TABLE IF EXISTS flags;
+
+--- Storage and game status:
+CREATE TABLE games(
+    name VARCHAR NOT NULL PRIMARY KEY,
+    status VARCHAR NOT NULL,
+    rows INTEGER NOT NULL,
+    columns INTEGER NOT NULL,
+    bombs INTEGER NOT NULL
+);
+
+CREATE TABLE bombs(
+    game_name VARCHAR NOT NULL REFERENCES games(name),
+    row INTEGER NOT NULL,
+    column INTEGER NOT NULL,
+    unique (game_name, row, column)
+);
+
+CREATE TABLE clicks(
+    game_name VARCHAR NOT NULL REFERENCES games(name),
+    row INTEGER NOT NULL,
+    column INTEGER NOT NULL,
+    unique (game_name, row, column)
+);
+
+CREATE TABLE flags(
+    game_name VARCHAR NOT NULL REFERENCES games(name),
+    row INTEGER NOT NULL,
+    column INTEGER NOT NULL,
+    unique (game_name, row, column)
+);
+
+
+--- Output
+DROP VIEW IF EXISTS board_rows;
+CREATE VIEW board_rows(game_name, row_number) AS
+WITH RECURSIVE
+    rows AS (
+        SELECT game.name game_name, 1 num, game.rows maxrows  FROM games game
+        UNION ALL
+        SELECT r2.game_name, r2.num + 1, r2.maxrows FROM rows r2 WHERE r2.num  < r2.maxrows
+    )
+    SELECT game_name, num FROM rows
+    ;
+
+DROP VIEW IF EXISTS board_columns;
+CREATE VIEW board_columns(game_name, column_number) AS
+WITH RECURSIVE
+    columns AS (
+        SELECT game.name game_name, 1 num, game.columns maxcols  FROM games game
+        UNION ALL
+        SELECT c2.game_name, c2.num + 1, c2.maxcols FROM columns c2 WHERE c2.num  < c2.maxcols
+    )
+    SELECT game_name, num FROM columns
+    ;
+
+DROP VIEW IF EXISTS board_cells;
+CREATE VIEW board_cells(game_name, row, column, clicked, flagged, is_bomb, bomb_neighbours, visible, rendered, cheat_rendered) AS
+WITH
+    cells AS (
+        SELECT
+            row.game_name,
+            row.row_number,
+            col.column_number
+        FROM board_rows row
+            INNER JOIN board_columns col ON row.game_name = col.game_name
+    ),
+    cellinfo AS (SELECT
+           cell.game_name game_name,
+           cell.row_number row_number,
+           cell.column_number column_number,
+           CASE WHEN EXISTS(SELECT * FROM clicks WHERE game_name = cell.game_name AND row = cell.row_number AND "column" = cell.column_number) THEN 1 else 0 END clicked,
+           CASE WHEN EXISTS(SELECT * FROM flags WHERE game_name = cell.game_name AND row = cell.row_number AND "column" = cell.column_number) THEN 1 else 0 END flagged,
+           CASE WHEN EXISTS(SELECT * FROM bombs WHERE game_name = cell.game_name AND row = cell.row_number AND "column" = cell.column_number) THEN 1 else 0 END is_bomb,
+           (SELECT COUNT(*) FROM bombs b
+                    WHERE b.game_name = cell.game_name
+                      AND b.row >= cell.row_number - 1 AND b.row <= cell.row_number + 1
+                      AND b.column >= cell.column_number - 1 AND b.column <= cell.column_number + 1
+                      AND (b.row != cell.row_number OR b.column != cell.column_number)) bomb_neighbours,
+           CASE WHEN EXISTS(
+               SELECT * FROM clicks c
+               WHERE c.game_name = cell.game_name
+               AND c.row >= cell.row_number - 1 AND c.row <= row_number + 1
+               AND c.column >= cell.column_number - 1 AND c.column <= cell.column_number + 1
+           ) THEN 1 ELSE 0 END visible
+    FROM cells cell)
+    SELECT
+           *,
+           CASE
+                WHEN is_bomb > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') THEN '*'
+                WHEN bomb_neighbours > 0 AND clicked > 0 THEN bomb_neighbours
+                WHEN clicked > 0 THEN '█'
+                WHEN flagged > 0 THEN 'F'
+                ELSE ' '
+           END rendered,
+           CASE
+               WHEN is_bomb > 0 THEN '*'
+               WHEN bomb_neighbours > 0 THEN bomb_neighbours
+               WHEN flagged > 0 THEN 'F'
+               WHEN clicked > 0 THEN '█'
+               ELSE ' '
+           END cheat_rendered
+    FROM cellinfo
+;
+
+-- DROP VIEW IF EXISTS rendered_cells;
+-- CREATE VIEW rendered_cells(game_name, row, column, display_value) AS
+--     SELECT
+--            game_name,
+--            "row",
+--            "column",
+--            CASE
+--                 WHEN is_bomb > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') THEN '*'
+--                 WHEN clicked > 0 THEN '█'
+--                 WHEN flagged > 0 THEN 'F'
+--                 WHEN bomb_neighbours > 0 AND clicked > 0 THEN bomb_neighbours
+--                 ELSE ' '
+--            END
+--    FROM board_cells;
+
+DROP VIEW IF EXISTS rendered_board;
+CREATE VIEW rendered_board(game_name, row_number, rendered) AS
+WITH RECURSIVE
+    output AS (
+        SELECT
+               game_name game_name,
+               row_number row_number,
+               '' rendered,
+               0 is_last
+        FROM board_rows rows
+        UNION ALL
+        SELECT
+            game_name,
+            row_number,
+            rendered || (SELECT rendered FROM board_cells cell WHERE cell.game_name = output.game_name AND cell.row = output.row_number AND cell.column = LENGTH(output.rendered) + 1),
+            LENGTH(rendered) = (SELECT columns FROM games game WHERE game.name = output.game_name) - 1
+        FROM output WHERE is_last = 0
+    )
+SELECT game_name, row_number, rendered FROM output WHERE is_last = 1;
+
+DROP VIEW IF EXISTS cheat_board;
+CREATE VIEW cheat_board(game_name, row_number, rendered) AS
+WITH RECURSIVE
+    output AS (
+        SELECT
+               game_name game_name,
+               row_number row_number,
+               '' rendered,
+               0 is_last
+        FROM board_rows rows
+        UNION ALL
+        SELECT
+            game_name,
+            row_number,
+            rendered || (SELECT cheat_rendered FROM board_cells cell WHERE cell.game_name = output.game_name AND cell.row = output.row_number AND cell.column = LENGTH(output.rendered) + 1),
+            LENGTH(rendered) = (SELECT columns FROM games game WHERE game.name = output.game_name) - 1
+        FROM output WHERE is_last = 0
+    )
+SELECT game_name, row_number, rendered FROM output WHERE is_last = 1;
+
+--- Input
+DROP VIEW IF EXISTS start_game;
+DROP VIEW IF EXISTS click_cell;
+CREATE VIEW start_game(name, rows, columns, bombs) AS SELECT(NULL, NULL, NULL, NULL);
+
+CREATE TRIGGER start_game
+    INSTEAD OF INSERT ON start_game
+    BEGIN
+        --TODO: Validate board size and bomb count
+        -- rows >= 1
+        -- columns >= 1
+        -- bombs >= 1 <= (rows*columns - 1)
+        INSERT INTO
+            games(name, status, rows, columns, bombs)
+        VALUES (NEW.name,
+                'ACTIVE',
+                COALESCE(NEW.rows, 10),
+                COALESCE(NEW.columns, 10),
+                COALESCE(NEW.bombs, 10)
+            );
+    END;
+
+DROP VIEW IF EXISTS random_locations;
+CREATE VIEW random_locations(game_name, row, column) AS
+WITH RECURSIVE
+     loc AS (
+         SELECT
+                g.name game_name,
+                1 + ABS(RANDOM()) % (SELECT rows FROM games WHERE name = g.name) row,
+                1 + ABS(RANDOM()) % (SELECT columns FROM games WHERE name = g.name) col
+         FROM games g
+         UNION ALL
+         SELECT
+                loc.game_name,
+                1 + ABS(RANDOM()) % (SELECT rows FROM games WHERE name = loc.game_name) row,
+                1 + ABS(RANDOM()) % (SELECT columns FROM games WHERE name = loc.game_name) col
+         FROM loc
+     )
+SELECT DISTINCT * FROM loc;
+
+DROP VIEW IF EXISTS random_free_locations;
+CREATE VIEW random_free_locations(game_name, row, column) AS
+    SELECT * FROM random_locations loc
+    WHERE NOT EXISTS(SELECT * FROM bombs b WHERE b.game_name = loc.game_name AND b.row = loc.row AND b.column = loc.column)
+    AND NOT EXISTS(SELECT * FROM clicks c WHERE c.game_name = loc.game_name AND c.row = loc.row AND c.column = loc.column);
+
+
+CREATE VIEW click_cell(game_name, row, column) AS SELECT(NULL, NULL, NULL);
+CREATE TRIGGER click_cell INSTEAD OF INSERT ON click_cell
+BEGIN
+    --Check if game exists and is still running:
+    SELECT RAISE(FAIL, 'Game not found') WHERE NOT EXISTS(SELECT * FROM games WHERE name = NEW.game_name);
+    SELECT RAISE(FAIL, 'Game already finished') FROM games WHERE name = NEW.game_name AND status != 'ACTIVE';
+
+    --Check if field was already clicked:
+    SELECT RAISE(IGNORE) FROM clicks WHERE game_name = NEW.game_name AND row = NEW.row AND column = NEW.column;
+
+    --Check loss condition:
+    UPDATE games SET status = 'LOST'
+    WHERE name = NEW.game_name
+      AND EXISTS(SELECT * FROM bombs WHERE bombs.game_name = NEW.game_name AND bombs.row = NEW.row AND bombs.column = NEW.column);
+    SELECT RAISE(FAIL, 'Bomb clicked!') FROM games WHERE name = NEW.game_name AND status != 'ACTIVE';
+
+    --Save 'click'
+    INSERT INTO clicks(game_name, row, column) VALUES (NEW.game_name, NEW.row, NEW.column);
+
+    --Generate missing bombs, if necessary
+    INSERT INTO bombs(game_name, row, column)
+        SELECT * FROM random_free_locations
+        LIMIT
+            (SELECT bombs FROM games WHERE name = NEW.game_name) - (SELECT COUNT(*) FROM bombs WHERE game_name = NEW.game_name);
+END;
+
+--- Example game:
+INSERT INTO start_game(name, rows, columns, bombs) VALUES ('The Game', 5, 7, 5);
+SELECT * FROM games;
+
+INSERT INTO click_cell(game_name, row, column) VALUES ('The Game', 1, 1);
+INSERT INTO click_cell(game_name, row, column) VALUES ('The Game', 1, 1);
+
+SELECT * FROM rendered_board WHERE game_name = 'The Game';
+SELECT * FROM cheat_board WHERE game_name = 'The Game';

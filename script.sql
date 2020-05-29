@@ -149,6 +149,7 @@ SELECT game_name, row_number, rendered FROM output WHERE is_last = 1;
 
 
 DROP VIEW IF EXISTS game_prompt;
+DROP VIEW IF EXISTS current_game_prompt;
 CREATE VIEW game_prompt(game_name, output) AS
 WITH RECURSIVE
     board AS (
@@ -189,13 +190,15 @@ SELECT
        game_status_msg.status_message || x'0a' || board.rendered || game_status_msg.prompt
        FROM board
        INNER JOIN game_status_msg ON board.game_name = game_status_msg.game_name
+       INNER JOIN games ON board.game_name = games.name
        WHERE board.is_last = 1
+       ORDER BY games.ROWID DESC
        ;
-
 
 --- Input
 DROP VIEW IF EXISTS start_game;
 DROP VIEW IF EXISTS click_cell;
+DROP VIEW IF EXISTS click_cell_on_game;
 CREATE VIEW start_game(name, rows, columns, bombs) AS SELECT(NULL, NULL, NULL, NULL);
 
 CREATE TRIGGER start_game
@@ -205,6 +208,11 @@ CREATE TRIGGER start_game
         -- rows >= 1
         -- columns >= 1
         -- bombs >= 1 <= (rows*columns - 1)
+
+        --Ensure only one game is running at any time.
+        SELECT RAISE(FAIL, 'Game already running.') FROM games WHERE status = 'ACTIVE';
+
+        --Create game
         INSERT INTO
             games(name, status, rows, columns, bombs)
         VALUES (NEW.name,
@@ -240,8 +248,8 @@ CREATE VIEW random_free_locations(game_name, row, "column") AS
     AND NOT EXISTS(SELECT * FROM clicks c WHERE c.game_name = loc.game_name AND c.row = loc.row AND c.column = loc.column);
 
 
-CREATE VIEW click_cell(game_name, row, "column") AS SELECT(NULL, NULL, NULL);
-CREATE TRIGGER click_cell INSTEAD OF INSERT ON click_cell
+CREATE VIEW click_cell_on_game(game_name, row, "column") AS SELECT(NULL, NULL, NULL);
+CREATE TRIGGER click_cell_on_game INSTEAD OF INSERT ON click_cell_on_game
 BEGIN
     --Check if game exists and is still running:
     SELECT RAISE(FAIL, 'Game not found') WHERE NOT EXISTS(SELECT * FROM games WHERE name = NEW.game_name);
@@ -273,7 +281,7 @@ BEGIN
             (SELECT bombs FROM games WHERE name = NEW.game_name) - (SELECT COUNT(*) FROM bombs WHERE game_name = NEW.game_name);
 
     --If the clicked cell does not have mines as neighbours, click all neighbours.
-    INSERT INTO click_cell(game_name, row, "column")
+    INSERT INTO click_cell_on_game(game_name, row, "column")
     SELECT
            NEW.game_name,
            c.row,
@@ -289,7 +297,6 @@ BEGIN
            AND   "row" = NEW.row
            AND "column" = NEW.column) = 0;
 
-    --Check win condition: (All mines flagged)
     --Check win condition: (All non-mines clicked)
     UPDATE games SET status = 'WON' WHERE name = NEW.game_name AND NOT EXISTS(
         SELECT * FROM board_cells
@@ -299,13 +306,27 @@ BEGIN
     );
 END;
 
+CREATE VIEW click_cell(row, "column") AS SELECT(NULL, NULL);
+CREATE TRIGGER click_cell INSTEAD OF INSERT ON click_cell
+BEGIN
+    SELECT RAISE(FAIL, 'Game already running.') WHERE NOT EXISTS(SELECT * FROM games WHERE status = 'ACTIVE');
+    INSERT INTO click_cell_on_game(game_name,
+                                   row,
+                                   "column")
+    VALUES (
+            (SELECT name FROM games WHERE status = 'ACTIVE'),
+            NEW.row,
+            NEW."column"
+           );
+END;
+
 --- Example game:
 INSERT INTO start_game(name, rows, columns, bombs) VALUES ('The Game', 3, 3, 2);
 SELECT * FROM games;
 
-INSERT INTO click_cell(game_name, row, "column") VALUES ('The Game', 1, 1);
+INSERT INTO click_cell(row, "column") VALUES (1, 1);
 
 SELECT * FROM rendered_board WHERE game_name = 'The Game';
 SELECT * FROM cheat_board WHERE game_name = 'The Game';
-SELECT * FROM game_prompt WHERE game_name = 'The Game';
-INSERT INTO click_cell VALUES('The Game', 3, 1);
+SELECT output FROM game_prompt LIMIT 1;
+INSERT INTO click_cell VALUES(3, 1);

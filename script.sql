@@ -147,6 +147,52 @@ WITH RECURSIVE
     )
 SELECT game_name, row_number, rendered FROM output WHERE is_last = 1;
 
+
+DROP VIEW IF EXISTS game_prompt;
+CREATE VIEW game_prompt(game_name, output) AS
+WITH RECURSIVE
+    board AS (
+        SELECT
+               game_name game_name,
+               '' rendered,
+               0 row_number,
+               (SELECT rows FROM games WHERE name = game_name) num_rows,
+               0 is_last
+        FROM
+             rendered_board
+        WHERE row_number = 1
+        UNION ALL
+        SELECT
+            board.game_name,
+            board.rendered || COALESCE((SELECT rendered FROM rendered_board WHERE rendered_board.row_number = board.row_number + 1), '') || x'0a',
+            board.row_number + 1,
+            board.num_rows,
+            board.row_number + 1 = board.num_rows
+        FROM board WHERE is_last = 0
+    ),
+    game_status_msg AS (
+        SELECT
+               name game_name,
+               CASE
+                   WHEN status = 'ACTIVE' THEN 'Game in progress'
+                   WHEN status = 'WON' THEN 'Game won'
+                   WHEN status = 'LOST' THEN 'Game lost'
+               END status_message,
+               CASE
+                   WHEN status = 'ACTIVE' THEN 'Please choose your next move by INSERTing into click_cell'
+                   ELSE ''
+               END prompt
+        FROM games
+    )
+SELECT
+       board.game_name,
+       game_status_msg.status_message || x'0a' || board.rendered || game_status_msg.prompt
+       FROM board
+       INNER JOIN game_status_msg ON board.game_name = game_status_msg.game_name
+       WHERE board.is_last = 1
+       ;
+
+
 --- Input
 DROP VIEW IF EXISTS start_game;
 DROP VIEW IF EXISTS click_cell;
@@ -210,14 +256,15 @@ BEGIN
         OR NEW.row > (SELECT rows FROM games WHERE name = NEW.game_name)
         OR NEW.column > (SELECT columns FROM games WHERE name = NEW.game_name);
 
+    --Save 'click'
+    INSERT INTO clicks(game_name, row, "column") VALUES (NEW.game_name, NEW.row, NEW.column);
+
     --Check loss condition:
     UPDATE games SET status = 'LOST'
     WHERE name = NEW.game_name
       AND EXISTS(SELECT * FROM bombs WHERE bombs.game_name = NEW.game_name AND bombs.row = NEW.row AND bombs.column = NEW.column);
     SELECT RAISE(FAIL, 'Bomb clicked!') FROM games WHERE name = NEW.game_name AND status != 'ACTIVE';
 
-    --Save 'click'
-    INSERT INTO clicks(game_name, row, "column") VALUES (NEW.game_name, NEW.row, NEW.column);
 
     --Generate missing bombs, if necessary
     INSERT INTO bombs(game_name, row, "column")
@@ -253,11 +300,12 @@ BEGIN
 END;
 
 --- Example game:
-INSERT INTO start_game(name, rows, columns, bombs) VALUES ('The Game', 5, 7, 5);
+INSERT INTO start_game(name, rows, columns, bombs) VALUES ('The Game', 3, 3, 2);
 SELECT * FROM games;
 
-INSERT INTO click_cell(game_name, row, "column") VALUES ('The Game', 1, 1);
 INSERT INTO click_cell(game_name, row, "column") VALUES ('The Game', 1, 1);
 
 SELECT * FROM rendered_board WHERE game_name = 'The Game';
 SELECT * FROM cheat_board WHERE game_name = 'The Game';
+SELECT * FROM game_prompt WHERE game_name = 'The Game';
+INSERT INTO click_cell VALUES('The Game', 3, 1);

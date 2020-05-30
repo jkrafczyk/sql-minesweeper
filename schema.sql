@@ -249,6 +249,15 @@ CREATE VIEW random_free_locations(game_name, row, "column") AS
     AND NOT EXISTS(SELECT * FROM clicks c WHERE c.game_name = loc.game_name AND c.row = loc.row AND c.column = loc.column);
 
 
+DROP VIEW IF EXISTS suitable_bomb_locations;
+CREATE VIEW suitable_bomb_locations(game_name, row, "column") AS
+WITH neighbours_of_clicks AS (
+    SELECT game_name, row, "column" FROM board_cells WHERE visible > 0
+)
+SELECT * FROM random_free_locations loc
+    WHERE NOT EXISTS(SELECT * FROM neighbours_of_clicks nb WHERE loc.row = nb.row AND loc."column" = nb."column" AND loc.game_name = nb.game_name);
+
+
 CREATE VIEW click_cell_on_game(game_name, row, "column") AS SELECT(NULL, NULL, NULL);
 CREATE TRIGGER click_cell_on_game INSTEAD OF INSERT ON click_cell_on_game
 BEGIN
@@ -277,7 +286,7 @@ BEGIN
 
     --Generate missing bombs, if necessary
     INSERT INTO bombs(game_name, row, "column")
-        SELECT * FROM random_free_locations
+        SELECT * FROM suitable_bomb_locations
         LIMIT
             (SELECT bombs FROM games WHERE name = NEW.game_name) - (SELECT COUNT(*) FROM bombs WHERE game_name = NEW.game_name);
 

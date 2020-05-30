@@ -205,10 +205,8 @@ CREATE VIEW start_game(name, rows, columns, bombs) AS SELECT(NULL, NULL, NULL, N
 CREATE TRIGGER start_game
     INSTEAD OF INSERT ON start_game
     BEGIN
-        --TODO: Validate board size and bomb count
-        -- rows >= 1
-        -- columns >= 1
-        -- bombs >= 1 <= (rows*columns - 1)
+        SELECT RAISE(FAIL, 'Board too small') WHERE COALESCE(NEW.rows, 10) < 4 OR COALESCE(NEW.columns, 10) < 4;
+        SELECT RAISE(FAIL, 'Board too small for selected number of bombs') WHERE COALESCE(NEW.bombs, 10) > (COALESCE(NEW.rows, 10) * COALESCE(NEW.columns, 10) - 10);
 
         --Ensure only one game is running at any time.
         SELECT RAISE(FAIL, 'Game already running.') FROM games WHERE status = 'ACTIVE';

@@ -327,3 +327,5 @@ BEGIN
             NEW."column"
            );
 END;
+
+--TODO: Implement flag/unflag operations

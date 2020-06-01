@@ -91,9 +91,11 @@ WITH
     SELECT
            *,
            CASE
+                WHEN is_bomb > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') AND EXISTS(SELECT * FROM clicks WHERE game_name = cellinfo.game_name AND row = cellinfo.row_number AND "column" = cellinfo.column_number) THEN '!'
                 WHEN is_bomb > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') THEN '*'
                 WHEN bomb_neighbours > 0 AND clicked > 0 THEN bomb_neighbours
                 WHEN clicked > 0 THEN '█'
+                WHEN flagged > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') AND NOT EXISTS(SELECT * FROM clicks WHERE game_name = cellinfo.game_name AND row = cellinfo.row_number AND "column" = cellinfo.column_number) then 'ꟻ'
                 WHEN flagged > 0 THEN 'F'
                 ELSE ' '
            END rendered,

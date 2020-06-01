@@ -36,6 +36,8 @@ CREATE TABLE flags(
 
 
 --- Output
+
+--Returns all valid row numbers for each game:
 DROP VIEW IF EXISTS board_rows;
 CREATE VIEW board_rows(game_name, row_number) AS
 WITH RECURSIVE
@@ -47,6 +49,7 @@ WITH RECURSIVE
     SELECT game_name, num FROM rows
     ;
 
+--Returns all valid column numbers for each game:
 DROP VIEW IF EXISTS board_columns;
 CREATE VIEW board_columns(game_name, column_number) AS
 WITH RECURSIVE
@@ -58,9 +61,11 @@ WITH RECURSIVE
     SELECT game_name, num FROM columns
     ;
 
+--Returns all cells including any relevant status and an appropriate character for displaying the cell for each game:
 DROP VIEW IF EXISTS board_cells;
 CREATE VIEW board_cells(game_name, row, "column", clicked, flagged, is_bomb, bomb_neighbours, visible, rendered, cheat_rendered) AS
 WITH
+    --All row/column coordinates for all games:
     cells AS (
         SELECT
             row.game_name,
@@ -69,6 +74,7 @@ WITH
         FROM board_rows row
             INNER JOIN board_columns col ON row.game_name = col.game_name
     ),
+    -- abstract information (visiblity, clicked, flagged, bomb, etc) for each cell:
     cellinfo AS (SELECT
            cell.game_name game_name,
            cell.row_number row_number,
@@ -88,17 +94,23 @@ WITH
                AND c.column >= cell.column_number - 1 AND c.column <= cell.column_number + 1
            ) THEN 1 ELSE 0 END visible
     FROM cells cell)
+    --Cellinfo, but with display values for the cell
     SELECT
            *,
+           --Display for in-game board:
            CASE
+                --clicked bomb after end of game
                 WHEN is_bomb > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') AND EXISTS(SELECT * FROM clicks WHERE game_name = cellinfo.game_name AND row = cellinfo.row_number AND "column" = cellinfo.column_number) THEN '!'
+               --non-clicked bomb after end of game
                 WHEN is_bomb > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') THEN '*'
                 WHEN bomb_neighbours > 0 AND clicked > 0 THEN bomb_neighbours
                 WHEN clicked > 0 THEN '█'
+                --incorrectly flagged field after end of game
                 WHEN flagged > 0 AND EXISTS(SELECT * FROM games WHERE name = game_name AND status != 'ACTIVE') AND NOT EXISTS(SELECT * FROM clicks WHERE game_name = cellinfo.game_name AND row = cellinfo.row_number AND "column" = cellinfo.column_number) then 'ꟻ'
                 WHEN flagged > 0 THEN 'F'
                 ELSE ' '
            END rendered,
+           --Display for cheat view
            CASE
                WHEN is_bomb > 0 THEN '*'
                WHEN bomb_neighbours > 0 THEN bomb_neighbours
@@ -109,6 +121,8 @@ WITH
     FROM cellinfo
 ;
 
+--Partially rendered boards for all games:
+-- (one result row for each row of the board)
 DROP VIEW IF EXISTS rendered_board;
 CREATE VIEW rendered_board(game_name, row_number, rendered) AS
 WITH RECURSIVE
@@ -129,6 +143,8 @@ WITH RECURSIVE
     )
 SELECT game_name, row_number, rendered FROM output WHERE is_last = 1;
 
+--Partially rendered boards for all games, for cheating (shows bombs before game is over):
+-- (one result row for each row of the board)
 DROP VIEW IF EXISTS cheat_board;
 CREATE VIEW cheat_board(game_name, row_number, rendered) AS
 WITH RECURSIVE
@@ -149,7 +165,7 @@ WITH RECURSIVE
     )
 SELECT game_name, row_number, rendered FROM output WHERE is_last = 1;
 
-
+-- 'User-friendly' prompt including a full ascii-art rendered board, some instructions and information about the game status
 DROP VIEW IF EXISTS game_prompt;
 DROP VIEW IF EXISTS current_game_prompt;
 CREATE VIEW game_prompt(game_name, output) AS

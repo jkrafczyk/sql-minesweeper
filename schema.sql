@@ -256,6 +256,20 @@ SELECT * FROM random_free_locations loc
     WHERE NOT EXISTS(SELECT * FROM neighbours_of_clicks nb WHERE loc.row = nb.row AND loc."column" = nb."column" AND loc.game_name = nb.game_name);
 
 
+DROP VIEW IF EXISTS flag_cell_on_game;
+CREATE VIEW flag_cell_on_game(game_name, row, "column") AS SELECT(NULL, NULL, NULL);
+CREATE TRIGGER flag_cell_on_game INSTEAD OF INSERT ON flag_cell_on_game
+BEGIN
+    INSERT INTO flags(game_name, row, "column") VALUES (NEW.game_name, NEW.row, NEW."column") ON CONFLICT DO NOTHING;
+END;
+
+DROP VIEW IF EXISTS unflag_cell_on_game;
+CREATE VIEW unflag_cell_on_game(game_name, row, "column") AS SELECT(NULL, NULL, NULL);
+CREATE TRIGGER unflag_cell_on_game INSTEAD OF INSERT ON unflag_cell_on_game
+BEGIN
+    DELETE FROM flags WHERE flags.game_name = NEW.game_name AND flags.row = NEW.row AND flags."column" = NEW."column";
+END;
+
 CREATE VIEW click_cell_on_game(game_name, row, "column") AS SELECT(NULL, NULL, NULL);
 CREATE TRIGGER click_cell_on_game INSTEAD OF INSERT ON click_cell_on_game
 BEGIN
@@ -264,7 +278,10 @@ BEGIN
     SELECT RAISE(FAIL, 'Game already finished') FROM games WHERE name = NEW.game_name AND status != 'ACTIVE';
 
     --Check if field was already clicked:
-    SELECT RAISE(IGNORE) FROM clicks WHERE game_name = NEW.game_name AND row = NEW.row AND "column" = NEW.column;
+    SELECT RAISE(IGNORE) FROM clicks WHERE game_name = NEW.game_name AND row = NEW.row AND "column" = NEW."column";
+
+    --Do not click flagged cells:
+    SELECT RAISE(IGNORE) FROM flags WHERE game_name = NEW.game_name AND row = NEW.row AND "column" = NEW."column";
 
     --Check if field is in range of valid fields for board:
     SELECT RAISE(FAIL, 'Selected position is of of bounds')
@@ -288,6 +305,22 @@ BEGIN
         LIMIT
             (SELECT bombs FROM games WHERE name = NEW.game_name) - (SELECT COUNT(*) FROM bombs WHERE game_name = NEW.game_name);
 
+    --Unflag all cells that we will auto-click in the next step:
+    INSERT INTO unflag_cell_on_game(game_name, row, "column")
+    SELECT
+           NEW.game_name,
+           c.row,
+           c.column
+    FROM board_cells c
+    WHERE
+          c.game_name = NEW.game_name
+    AND   c.row >= NEW.row - 1 AND c.row <= NEW.row + 1
+    AND   c.column >= NEW.column -1 AND c.column <= NEW.column + 1
+    AND   (SELECT board_cells.bomb_neighbours
+           FROM board_cells
+           WHERE game_name = NEW.game_name
+           AND   "row" = NEW.row
+           AND "column" = NEW.column) = 0;
     --If the clicked cell does not have mines as neighbours, click all neighbours.
     INSERT INTO click_cell_on_game(game_name, row, "column")
     SELECT
@@ -317,7 +350,7 @@ END;
 CREATE VIEW click_cell(row, "column") AS SELECT(NULL, NULL);
 CREATE TRIGGER click_cell INSTEAD OF INSERT ON click_cell
 BEGIN
-    SELECT RAISE(FAIL, 'Game already running.') WHERE NOT EXISTS(SELECT * FROM games WHERE status = 'ACTIVE');
+    SELECT RAISE(FAIL, 'Game not running.') WHERE NOT EXISTS(SELECT * FROM games WHERE status = 'ACTIVE');
     INSERT INTO click_cell_on_game(game_name,
                                    row,
                                    "column")
@@ -328,4 +361,30 @@ BEGIN
            );
 END;
 
---TODO: Implement flag/unflag operations
+CREATE VIEW flag_cell(row, "column") AS SELECT(NULL, NULL);
+CREATE TRIGGER flag_cell INSTEAD OF INSERT ON flag_cell
+BEGIN
+    SELECT RAISE(FAIL, 'Game not running.') WHERE NOT EXISTS(SELECT * FROM games WHERE status = 'ACTIVE');
+    INSERT INTO flag_cell_on_game(game_name,
+                                   row,
+                                   "column")
+    VALUES (
+            (SELECT name FROM games WHERE status = 'ACTIVE'),
+            NEW.row,
+            NEW."column"
+           );
+END;
+
+CREATE VIEW unflag_cell(row, "column") AS SELECT(NULL, NULL);
+CREATE TRIGGER unflag_cell INSTEAD OF INSERT ON unflag_cell
+BEGIN
+    SELECT RAISE(FAIL, 'Game not running.') WHERE NOT EXISTS(SELECT * FROM games WHERE status = 'ACTIVE');
+    INSERT INTO unflag_cell_on_game(game_name,
+                                   row,
+                                   "column")
+    VALUES (
+            (SELECT name FROM games WHERE status = 'ACTIVE'),
+            NEW.row,
+            NEW."column"
+           );
+END;
